@@ -31,7 +31,12 @@ UdpListenerImpl::UdpListenerImpl(Event::DispatcherImpl& dispatcher, Socket& sock
     : BaseListenerImpl(dispatcher, socket), cb_(cb), time_source_(time_source) {
   file_event_ = dispatcher_.createFileEvent(
       socket.ioHandle().fd(), [this](uint32_t events) -> void { onSocketEvent(events); },
+// libevent only supports level trigger on Windows
+#ifdef WIN32
+      Event::FileTriggerType::Level, Event::FileReadyType::Read | Event::FileReadyType::Write);
+#else
       Event::FileTriggerType::Edge, Event::FileReadyType::Read | Event::FileReadyType::Write);
+#endif
 
   ASSERT(file_event_);
 
@@ -76,6 +81,7 @@ void UdpListenerImpl::handleReadCallback() {
 
     if (!result.ok()) {
       // No more to read or encountered a system error.
+      // TODO (Pivotal): Ensure this captures WSAEWOULDBLOCK
       if (result.err_->getErrorCode() != Api::IoError::IoErrorCode::Again) {
         ENVOY_UDP_LOG(error, "recvmsg result {}: {}", static_cast<int>(result.err_->getErrorCode()),
                       result.err_->getErrorDetails());

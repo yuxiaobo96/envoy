@@ -274,114 +274,117 @@ bool DoPartialPath(const CHAR* spec, const Component& path, int path_begin_in_ou
   bool success = true;
   for (int i = path.begin; i < end; i++) {
     UCHAR uch = static_cast<UCHAR>(spec[i]);
-    if (sizeof(CHAR) > 1 && uch >= 0x80) {
-      // We only need to test wide input for having non-ASCII characters. For
-      // narrow input, we'll always just use the lookup table. We don't try to
-      // do anything tricky with decoding/validating UTF-8. This function will
-      // read one or two UTF-16 characters and append the output as UTF-8. This
-      // call will be removed in 8-bit mode.
-      success &= AppendUTF8EscapedChar(spec, &i, end, output);
-    } else {
-      // Normal ASCII character or 8-bit input, use the lookup table.
-      unsigned char out_ch = static_cast<unsigned char>(uch);
-      unsigned char flags = kPathCharLookup[out_ch];
-      if (flags & SPECIAL) {
-        // Needs special handling of some sort.
-        int dotlen;
-        if ((dotlen = IsDot(spec, i, end)) > 0) {
-          // See if this dot was preceded by a slash in the output. We
-          // assume that when canonicalizing paths, they will always
-          // start with a slash and not a dot, so we don't have to
-          // bounds check the output.
-          //
-          // Note that we check this in the case of dots so we don't have to
-          // special case slashes. Since slashes are much more common than
-          // dots, this actually increases performance measurably (though
-          // slightly).
-          DCHECK(output->length() > path_begin_in_output);
-          if (output->length() > path_begin_in_output && output->at(output->length() - 1) == '/') {
-            // Slash followed by a dot, check to see if this is means relative
-            int consumed_len;
-            switch (ClassifyAfterDot<CHAR>(spec, i + dotlen, end, &consumed_len)) {
-            case NOT_A_DIRECTORY:
-              // Copy the dot to the output, it means nothing special.
-              output->push_back('.');
-              i += dotlen - 1;
-              break;
-            case DIRECTORY_CUR: // Current directory, just skip the input.
-              i += dotlen + consumed_len - 1;
-              break;
-            case DIRECTORY_UP:
-              BackUpToPreviousSlash(path_begin_in_output, output);
-              i += dotlen + consumed_len - 1;
-              break;
-            }
-          } else {
-            // This dot is not preceded by a slash, it is just part of some
-            // file name.
+    // TODO(wrowe): this entire logic is currently unneeded, as the missing templated result
+    // refers only to char const* (single-byte) characters at this time. This apparently only
+    // trips up win32, since linux gcc seems to optimize it away
+    //  if (sizeof(CHAR) > 1 && uch >= 0x80) {
+    // We only need to test wide input for having non-ASCII characters. For
+    // narrow input, we'll always just use the lookup table. We don't try to
+    // do anything tricky with decoding/validating UTF-8. This function will
+    // read one or two UTF-16 characters and append the output as UTF-8. This
+    // call will be removed in 8-bit mode.
+    //    success &= AppendUTF8EscapedChar(spec, &i, end, output);
+    //  } else {
+    // Normal ASCII character or 8-bit input, use the lookup table.
+    unsigned char out_ch = static_cast<unsigned char>(uch);
+    unsigned char flags = kPathCharLookup[out_ch];
+    if (flags & SPECIAL) {
+      // Needs special handling of some sort.
+      int dotlen;
+      if ((dotlen = IsDot(spec, i, end)) > 0) {
+        // See if this dot was preceded by a slash in the output. We
+        // assume that when canonicalizing paths, they will always
+        // start with a slash and not a dot, so we don't have to
+        // bounds check the output.
+        //
+        // Note that we check this in the case of dots so we don't have to
+        // special case slashes. Since slashes are much more common than
+        // dots, this actually increases performance measurably (though
+        // slightly).
+        DCHECK(output->length() > path_begin_in_output);
+        if (output->length() > path_begin_in_output && output->at(output->length() - 1) == '/') {
+          // Slash followed by a dot, check to see if this is means relative
+          int consumed_len;
+          switch (ClassifyAfterDot<CHAR>(spec, i + dotlen, end, &consumed_len)) {
+          case NOT_A_DIRECTORY:
+            // Copy the dot to the output, it means nothing special.
             output->push_back('.');
             i += dotlen - 1;
+            break;
+          case DIRECTORY_CUR: // Current directory, just skip the input.
+            i += dotlen + consumed_len - 1;
+            break;
+          case DIRECTORY_UP:
+            BackUpToPreviousSlash(path_begin_in_output, output);
+            i += dotlen + consumed_len - 1;
+            break;
           }
+        } else {
+          // This dot is not preceded by a slash, it is just part of some
+          // file name.
+          output->push_back('.');
+          i += dotlen - 1;
+        }
 
-        } else if (out_ch == '\\') {
-          // Convert backslashes to forward slashes
-          output->push_back('/');
+      } else if (out_ch == '\\') {
+        // Convert backslashes to forward slashes
+        output->push_back('/');
 
-        } else if (out_ch == '%') {
-          // Handle escape sequences.
-          unsigned char unescaped_value;
-          if (DecodeEscaped(spec, &i, end, &unescaped_value)) {
-            // Valid escape sequence, see if we keep, reject, or unescape it.
-            // Note that at this point DecodeEscape() will have advanced |i| to
-            // the last character of the escape sequence.
-            char unescaped_flags = kPathCharLookup[unescaped_value];
+      } else if (out_ch == '%') {
+        // Handle escape sequences.
+        unsigned char unescaped_value;
+        if (DecodeEscaped(spec, &i, end, &unescaped_value)) {
+          // Valid escape sequence, see if we keep, reject, or unescape it.
+          // Note that at this point DecodeEscape() will have advanced |i| to
+          // the last character of the escape sequence.
+          char unescaped_flags = kPathCharLookup[unescaped_value];
 
-            if (unescaped_flags & UNESCAPE) {
-              // This escaped value shouldn't be escaped. Try to copy it.
-              output->push_back(unescaped_value);
-              // If we just unescaped a value within 2 output characters of the
-              // '%' from a previously-detected invalid escape sequence, we
-              // might have an input string with problematic nested escape
-              // sequences; detect and fix them.
-              if (last_invalid_percent_index >= (output->length() - 3)) {
-                CheckForNestedEscapes(spec, i + 1, end, last_invalid_percent_index, output);
-              }
-            } else {
-              // Either this is an invalid escaped character, or it's a valid
-              // escaped character we should keep escaped. In the first case we
-              // should just copy it exactly and remember the error. In the
-              // second we also copy exactly in case the server is sensitive to
-              // changing the case of any hex letters.
-              output->push_back('%');
-              output->push_back(static_cast<char>(spec[i - 1]));
-              output->push_back(static_cast<char>(spec[i]));
-              if (unescaped_flags & INVALID_BIT)
-                success = false;
+          if (unescaped_flags & UNESCAPE) {
+            // This escaped value shouldn't be escaped. Try to copy it.
+            output->push_back(unescaped_value);
+            // If we just unescaped a value within 2 output characters of the
+            // '%' from a previously-detected invalid escape sequence, we
+            // might have an input string with problematic nested escape
+            // sequences; detect and fix them.
+            if (last_invalid_percent_index >= (output->length() - 3)) {
+              CheckForNestedEscapes(spec, i + 1, end, last_invalid_percent_index, output);
             }
           } else {
-            // Invalid escape sequence. IE7+ rejects any URLs with such
-            // sequences, while other browsers pass them through unchanged. We
-            // use the permissive behavior.
-            // TODO(brettw): Consider testing IE's strict behavior, which would
-            // allow removing the code to handle nested escapes above.
-            last_invalid_percent_index = output->length();
+            // Either this is an invalid escaped character, or it's a valid
+            // escaped character we should keep escaped. In the first case we
+            // should just copy it exactly and remember the error. In the
+            // second we also copy exactly in case the server is sensitive to
+            // changing the case of any hex letters.
             output->push_back('%');
+            output->push_back(static_cast<char>(spec[i - 1]));
+            output->push_back(static_cast<char>(spec[i]));
+            if (unescaped_flags & INVALID_BIT)
+              success = false;
           }
-
-        } else if (flags & INVALID_BIT) {
-          // For NULLs, etc. fail.
-          AppendEscapedChar(out_ch, output);
-          success = false;
-
-        } else if (flags & ESCAPE_BIT) {
-          // This character should be escaped.
-          AppendEscapedChar(out_ch, output);
+        } else {
+          // Invalid escape sequence. IE7+ rejects any URLs with such
+          // sequences, while other browsers pass them through unchanged. We
+          // use the permissive behavior.
+          // TODO(brettw): Consider testing IE's strict behavior, which would
+          // allow removing the code to handle nested escapes above.
+          last_invalid_percent_index = output->length();
+          output->push_back('%');
         }
-      } else {
-        // Nothing special about this character, just append it.
-        output->push_back(out_ch);
+
+      } else if (flags & INVALID_BIT) {
+        // For NULLs, etc. fail.
+        AppendEscapedChar(out_ch, output);
+        success = false;
+
+      } else if (flags & ESCAPE_BIT) {
+        // This character should be escaped.
+        AppendEscapedChar(out_ch, output);
       }
+    } else {
+      // Nothing special about this character, just append it.
+      output->push_back(out_ch);
     }
+    //  }
   }
   return success;
 }

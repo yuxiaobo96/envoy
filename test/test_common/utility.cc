@@ -20,6 +20,7 @@
 #include "envoy/service/discovery/v2/rtds.pb.h"
 
 #include "common/api/api_impl.h"
+#include "common/api/os_sys_calls_impl.h"
 #include "common/common/empty_string.h"
 #include "common/common/fmt.h"
 #include "common/common/lock_guard.h"
@@ -306,6 +307,26 @@ std::string TestUtility::convertTime(const std::string& input, const std::string
   return TestUtility::formatTime(TestUtility::parseTime(input, input_format), output_format);
 }
 
+#ifdef WIN32
+SOCKET_FD TestUtility::duplicateSocket(SOCKET_FD sock) {
+  WSAPROTOCOL_INFO proto_info;
+  const int rc = ::WSADuplicateSocket(sock, ::GetCurrentProcessId(), &proto_info);
+  RELEASE_ASSERT(!SOCKET_FAILURE(rc),
+                 fmt::format("WSADuplicateSocket failed: {}", ::WSAGetLastError()));
+  const SOCKET_FD dup_socket =
+      ::WSASocket(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &proto_info, 0, 0);
+  RELEASE_ASSERT(!SOCKET_INVALID(dup_socket),
+                 fmt::format("WSASocket failed: {}", ::WSAGetLastError()));
+  return dup_socket;
+}
+#else
+SOCKET_FD TestUtility::duplicateSocket(SOCKET_FD sock) {
+  const SOCKET_FD dup_socket = ::dup(sock);
+  RELEASE_ASSERT(!SOCKET_INVALID(dup_socket), fmt::format("dup failed: {}", errno));
+  return dup_socket;
+}
+#endif
+
 // static
 bool TestUtility::gaugesZeroed(const std::vector<Stats::GaugeSharedPtr>& gauges) {
   // Returns true if all gauges are 0 except the circuit_breaker remaining resource
@@ -373,7 +394,7 @@ void AtomicFileUpdater::update(const std::string& contents) {
   const std::string target = use_target1_ ? target1_ : target2_;
   use_target1_ = !use_target1_;
   {
-    std::ofstream file(target);
+    std::ofstream file(target, std::ios_base::binary);
     file << contents;
   }
   TestUtility::createSymlink(target, new_link_);
