@@ -13,7 +13,7 @@ df -h
 
 . "$(dirname "$0")"/setup_cache.sh
 
-BAZEL_STARTUP_OPTIONS="--bazelrc=windows/.bazelrc --output_base=c:\_eb"
+BAZEL_STARTUP_OPTIONS="--bazelrc=windows/.bazelrc"
 BAZEL_BUILD_OPTIONS="--show_task_finish --verbose_failures \
   --test_output=all ${BAZEL_BUILD_EXTRA_OPTIONS} ${BAZEL_EXTRA_TEST_OPTIONS}"
 
