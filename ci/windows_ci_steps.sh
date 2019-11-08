@@ -14,9 +14,9 @@ df -h
 . "$(dirname "$0")"/setup_cache.sh
 
 BAZEL_STARTUP_OPTIONS="--bazelrc=windows/.bazelrc"
-BAZEL_BUILD_OPTIONS="--show_task_finish --verbose_failures \
+BAZEL_BUILD_OPTIONS="--show_task_finish --verbose_failures -s \
   --test_output=all ${BAZEL_BUILD_EXTRA_OPTIONS} ${BAZEL_EXTRA_TEST_OPTIONS}"
 
-bazel ${BAZEL_STARTUP_OPTIONS} build ${BAZEL_BUILD_OPTIONS} //source/exe:envoy-static --test_tag_filters=-skip_on_windows
+bazel ${BAZEL_STARTUP_OPTIONS} build ${BAZEL_BUILD_OPTIONS} //source/exe:envoy-static
 
 bazel ${BAZEL_STARTUP_OPTIONS} test ${BAZEL_BUILD_OPTIONS} //test/... --test_tag_filters=-skip_on_windows --build_tests_only --test_summary=terse --test_output=errors -- -//test/extensions/... -//test/integration/...
